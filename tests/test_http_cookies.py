@@ -1,4 +1,4 @@
-from six.moves.urllib.parse import urlparse
+from urllib.parse import urlparse
 from unittest import TestCase
 
 from scrapy.http import Request, Response
@@ -62,10 +62,7 @@ class WrappedResponseTest(TestCase):
         self.wrapped = WrappedResponse(self.response)
 
     def test_info(self):
-        self.assert_(self.wrapped.info() is self.wrapped)
-
-    def test_getheaders(self):
-        self.assertEqual(self.wrapped.getheaders('content-type'), ['text/html'])
+        self.assertIs(self.wrapped.info(), self.wrapped)
 
     def test_get_all(self):
         # get_all result must be native string

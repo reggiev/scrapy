@@ -1,16 +1,16 @@
-# -*- coding: utf-8 -*-
-
-import sys
 import logging
+import sys
 import warnings
 from logging.config import dictConfig
 
-from twisted.python.failure import Failure
 from twisted.python import log as twisted_log
+from twisted.python.failure import Failure
 
 import scrapy
-from scrapy.settings import overridden_settings, Settings
 from scrapy.exceptions import ScrapyDeprecationWarning
+from scrapy.settings import Settings
+from scrapy.utils.versions import scrapy_components_versions
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +30,14 @@ class TopLevelFormatter(logging.Filter):
 
     Since it can't be set for just one logger (it won't propagate for its
     children), it's going to be set in the root handler, with a parametrized
-    `loggers` list where it should act.
+    ``loggers`` list where it should act.
     """
 
     def __init__(self, loggers=None):
         self.loggers = loggers or []
 
     def filter(self, record):
-        if any(record.name.startswith(l + '.') for l in self.loggers):
+        if any(record.name.startswith(logger + '.') for logger in self.loggers):
             record.name = record.name.split('.', 1)[0]
         return True
 
@@ -142,16 +142,28 @@ def _get_handler(settings):
 def log_scrapy_info(settings):
     logger.info("Scrapy %(version)s started (bot: %(bot)s)",
                 {'version': scrapy.__version__, 'bot': settings['BOT_NAME']})
+    versions = [
+        f"{name} {version}"
+        for name, version in scrapy_components_versions()
+        if name != "Scrapy"
+    ]
+    logger.info("Versions: %(versions)s", {'versions': ", ".join(versions)})
+    from twisted.internet import reactor
+    logger.debug("Using reactor: %s.%s", reactor.__module__, reactor.__class__.__name__)
+    from twisted.internet import asyncioreactor
+    if isinstance(reactor, asyncioreactor.AsyncioSelectorReactor):
+        logger.debug(
+            "Using asyncio event loop: %s.%s",
+            reactor._asyncioEventloop.__module__,
+            reactor._asyncioEventloop.__class__.__name__,
+        )
 
-    d = dict(overridden_settings(settings))
-    logger.info("Overridden settings: %(settings)r", {'settings': d})
 
-
-class StreamLogger(object):
+class StreamLogger:
     """Fake file-like stream object that redirects writes to a logger instance
 
     Taken from:
-        http://www.electricmonk.nl/log/2011/08/14/redirect-stdout-and-stderr-to-a-logger-in-python/
+        https://www.electricmonk.nl/log/2011/08/14/redirect-stdout-and-stderr-to-a-logger-in-python/
     """
     def __init__(self, logger, log_level=logging.INFO):
         self.logger = logger
@@ -171,11 +183,11 @@ class LogCounterHandler(logging.Handler):
     """Record log levels count into a crawler stats"""
 
     def __init__(self, crawler, *args, **kwargs):
-        super(LogCounterHandler, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.crawler = crawler
 
     def emit(self, record):
-        sname = 'log_count/{}'.format(record.levelname)
+        sname = f'log_count/{record.levelname}'
         self.crawler.stats.inc_value(sname)
 
 

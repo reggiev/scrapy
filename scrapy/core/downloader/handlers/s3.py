@@ -1,9 +1,10 @@
-from six.moves.urllib.parse import unquote
+from urllib.parse import unquote
 
+from scrapy.core.downloader.handlers.http import HTTPDownloadHandler
 from scrapy.exceptions import NotConfigured
-from scrapy.utils.httpobj import urlparse_cached
 from scrapy.utils.boto import is_botocore
-from .http import HTTPDownloadHandler
+from scrapy.utils.httpobj import urlparse_cached
+from scrapy.utils.misc import create_instance
 
 
 def _get_boto_connection():
@@ -21,7 +22,7 @@ def _get_boto_connection():
             return http_request.headers
 
     try:
-        import boto.auth
+        import boto.auth  # noqa: F401
     except ImportError:
         _S3Connection = _v19_S3Connection
     else:
@@ -30,11 +31,12 @@ def _get_boto_connection():
     return _S3Connection
 
 
-class S3DownloadHandler(object):
+class S3DownloadHandler:
 
-    def __init__(self, settings, aws_access_key_id=None, aws_secret_access_key=None, \
-            httpdownloadhandler=HTTPDownloadHandler, **kw):
-
+    def __init__(self, settings, *,
+                 crawler=None,
+                 aws_access_key_id=None, aws_secret_access_key=None,
+                 httpdownloadhandler=HTTPDownloadHandler, **kw):
         if not aws_access_key_id:
             aws_access_key_id = settings['AWS_ACCESS_KEY_ID']
         if not aws_secret_access_key:
@@ -54,7 +56,7 @@ class S3DownloadHandler(object):
             import botocore.credentials
             kw.pop('anon', None)
             if kw:
-                raise TypeError('Unexpected keyword arguments: %s' % kw)
+                raise TypeError(f'Unexpected keyword arguments: {kw}')
             if not self.anon:
                 SignerCls = botocore.auth.AUTH_TYPE_MAPS['s3']
                 self._signer = SignerCls(botocore.credentials.Credentials(
@@ -67,21 +69,30 @@ class S3DownloadHandler(object):
             except Exception as ex:
                 raise NotConfigured(str(ex))
 
-        self._download_http = httpdownloadhandler(settings).download_request
+        _http_handler = create_instance(
+            objcls=httpdownloadhandler,
+            settings=settings,
+            crawler=crawler,
+        )
+        self._download_http = _http_handler.download_request
+
+    @classmethod
+    def from_crawler(cls, crawler, **kwargs):
+        return cls(crawler.settings, crawler=crawler, **kwargs)
 
     def download_request(self, request, spider):
         p = urlparse_cached(request)
         scheme = 'https' if request.meta.get('is_secure') else 'http'
         bucket = p.hostname
         path = p.path + '?' + p.query if p.query else p.path
-        url = '%s://%s.s3.amazonaws.com%s' % (scheme, bucket, path)
+        url = f'{scheme}://{bucket}.s3.amazonaws.com{path}'
         if self.anon:
             request = request.replace(url=url)
         elif self._signer is not None:
             import botocore.awsrequest
             awsrequest = botocore.awsrequest.AWSRequest(
                 method=request.method,
-                url='%s://s3.amazonaws.com/%s%s' % (scheme, bucket, path),
+                url=f'{scheme}://s3.amazonaws.com/{bucket}{path}',
                 headers=request.headers.to_unicode_dict(),
                 data=request.body)
             self._signer.add_auth(awsrequest)
@@ -89,11 +100,12 @@ class S3DownloadHandler(object):
                 url=url, headers=awsrequest.headers.items())
         else:
             signed_headers = self.conn.make_request(
-                    method=request.method,
-                    bucket=bucket,
-                    key=unquote(p.path),
-                    query_args=unquote(p.query),
-                    headers=request.headers,
-                    data=request.body)
+                method=request.method,
+                bucket=bucket,
+                key=unquote(p.path),
+                query_args=unquote(p.query),
+                headers=request.headers,
+                data=request.body,
+            )
             request = request.replace(url=url, headers=signed_headers)
         return self._download_http(request, spider)
